@@ -98,3 +98,30 @@ class GoogleOAuth2Service:
             refresh_token=token_data.get("refresh_token")
         )
 
+    @staticmethod
+    def fetch_user_profile(access_token: AccessToken) -> dict:
+        # 액세스 토큰을 사용하여 사용자 프로필을 조회
+        if not access_token or not access_token.access_token:
+            raise ValueError("Access token is required to fetch user profile")
+
+        google_userinfo_url = GoogleOAuth2Service._get_env_var("GOOGLE_USERINFO_URL")
+        headers = {"Authorization": f"Bearer {access_token.access_token}"}
+
+        try:
+            resp = requests.get(google_userinfo_url, headers=headers, timeout=10)
+            resp.raise_for_status()
+        except Timeout:
+            raise Exception("Request to Google userinfo endpoint timed out")
+        except RequestsConnectionError:
+            raise Exception("Failed to connect to Google userinfo endpoint")
+        except requests.HTTPError:
+            raise Exception(f"Google userinfo request failed with status {resp.status_code}: {resp.text}")
+        except RequestException as e:
+            raise Exception(f"Unexpected error during Google userinfo request: {str(e)}")
+
+        try:
+            user_profile = resp.json()
+        except ValueError as e:
+            raise Exception(f"Invalid JSON response from Google userinfo endpoint: {str(e)}")
+
+        return user_profile
