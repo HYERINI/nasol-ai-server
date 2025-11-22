@@ -1,8 +1,11 @@
 from abc import ABC, abstractmethod
+from typing import Optional
+
+from account.domain.account import Account
+
 
 class AccountRepositoryPort(ABC):
 
-    ## 임시
     @abstractmethod
-    def get_account_by_id(self, oauth_id: str):
+    def get_by_oauth_id(self, oauth_type: str, user_oauth_id: str) -> Optional[Account]:
         pass
