@@ -10,3 +10,8 @@ python-dotenv
 pymysql
 sqlalchemy
 redis
+transformers
+PyPDF2
+tensorflow
+torch
+torchvision

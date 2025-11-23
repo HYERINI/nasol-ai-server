@@ -1,6 +1,6 @@
 from datetime import datetime, timedelta
 
-## document 형식은 여러 종류가 있다.
+## documents 형식은 여러 종류가 있다.
 '''
 - 주요 문서 분석 대상 타입
     - 영수증(사진/스캔) - 이미지 기반 문서 포함

@@ -1,5 +1,5 @@
-from document.domain.document import Document
-from document.infrastructure.repository.document_repository_impl import DocumentRepositoryImpl
+from documents.domain.document import Document
+from documents.infrastructure.repository.document_repository_impl import DocumentRepositoryImpl
 
 
 class DocumentUseCase:

@@ -1,6 +1,6 @@
 from config.redis_config import get_redis
-from document.application.port.document_repository_port import DocumentRepositoryPort
-from document.domain.document import Document
+from documents.application.port.document_repository_port import DocumentRepositoryPort
+from documents.domain.document import Document
 
 redis_client = get_redis()
 class DocumentRepositoryImpl(DocumentRepositoryPort):
