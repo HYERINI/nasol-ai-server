@@ -41,9 +41,14 @@ async def logout_to_google(request: Request, session_id: str | None = Cookie(Non
 
 @authentication_router.get("/google/redirect")
 async def process_google_redirect(
-        code: str,
-        state: str | None = None
+        code: str | None = None,
+        state: str | None = None,
+        error: str | None = None
 ):
+    # Google OAuth 에러 처리 (access_denied 등)
+    if error:
+        print(f"[DEBUG] Google OAuth error: {error}")
+        return RedirectResponse("http://localhost:3000")
     print("[DEBUG] /google/redirect called")
 
     # session_id 생성

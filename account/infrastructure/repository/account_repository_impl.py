@@ -53,6 +53,7 @@ class AccountRepositoryImpl(AccountRepositoryPort):
                                                        AccountORM.oauth_id == user_oauth_id).first()
         if orm_account:
             account = Account(
+                session_id=orm_account.session_id,
                 oauth_id=orm_account.oauth_id,
                 oauth_type=orm_account.oauth_type,
                 nickname=orm_account.nickname,
@@ -72,6 +73,7 @@ class AccountRepositoryImpl(AccountRepositoryPort):
         orm_account = self.db.query(AccountORM).filter(AccountORM.oauth_id == oauth_id).first()
         if orm_account:
             account = Account(
+                session_id=orm_account.session_id,
                 oauth_id=orm_account.oauth_id,
                 oauth_type=orm_account.oauth_type,
                 nickname=orm_account.nickname,
