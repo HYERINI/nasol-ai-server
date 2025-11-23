@@ -38,11 +38,16 @@ class DocumentMultiAgentsUseCase:
         agents.update_parsed_text(parsed_text)
 
         # 병렬 요약
-        bullet, abstract, casual = await asyncio.gather(
-            bullet_summarizer(parsed_text),
-            abstract_summarizer(parsed_text),
-            casual_summarizer(parsed_text)
-        )
+        try:
+            bullet, abstract, casual = await asyncio.gather(
+                bullet_summarizer(parsed_text),
+                abstract_summarizer(parsed_text),
+                casual_summarizer(parsed_text)
+            )
+        except Exception as e:
+            print("[ERROR] Failed to summarize document:", str(e))
+            bullet, abstract, casual = "", "", ""
+
 
         final_summary = await consensus_summarizer([bullet, abstract, casual])
         answer = await answer_agent(final_summary, question)

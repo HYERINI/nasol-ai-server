@@ -1,4 +1,4 @@
-from datetime import datetime, timedelta
+from typing import Optional
 
 ## documents 형식은 여러 종류가 있다.
 '''
@@ -31,7 +31,10 @@ from datetime import datetime, timedelta
 ## 추후 시간이 남으면 key 값은 코드화
 
 class Document:
-    def __init__(self, session_id:str, file_key:str, file_value:str):
+    def __init__(self, session_id:str, file_name: str, s3_key: str, file_key:str, file_value:str):
+        self.id: Optional[int] = None
+        self.file_name = file_name
+        self.s3_key = s3_key
         self.session_id = session_id
         self.file_key = file_key
         self.file_value = file_value
