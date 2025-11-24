@@ -51,7 +51,7 @@ class AccountRepositoryImpl(AccountRepositoryPort):
         account.updated_at = orm_account.updated_at
         return account
 
-    def get_by_oauth_id(self, oauth_type: str, user_oauth_id: str) -> Optional[Account]:
+    def get_account_by_oauth_id(self, oauth_type: str, user_oauth_id: str) -> Optional[Account]:
         orm_account = self.db.query(AccountORM).filter(AccountORM.oauth_type == oauth_type,
                                                        AccountORM.oauth_id == user_oauth_id).first()
         if orm_account:
@@ -72,8 +72,8 @@ class AccountRepositoryImpl(AccountRepositoryPort):
             return account
         return None
 
-    def get_account_by_id(self, oauth_id: str) -> Optional[Account]:
-        orm_account = self.db.query(AccountORM).filter(AccountORM.oauth_id == oauth_id).first()
+    def get_account_by_session_id(self, session_id: str) -> Optional[Account]:
+        orm_account = self.db.query(AccountORM).filter(AccountORM.session_id == session_id).first()
         if orm_account:
             account = Account(
                 session_id=orm_account.session_id,

@@ -12,5 +12,8 @@ class AccountResponse(BaseModel):
     phone_number: str
     active_status: str
     role_id: str
+    automatic_analysis_cycle: int
+    target_period: int
+    target_amount: int
     updated_at: datetime
     created_at: datetime

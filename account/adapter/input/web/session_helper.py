@@ -19,7 +19,7 @@ def get_current_user(session_id: str = Cookie(None)) -> str:
         redis_client.expire(session_id, 24 * 60 * 60)
         return session_id
 
-    user_data_bytes = redis_client.get(session_id)
+    user_data_bytes = redis_client.hgetall(session_id)
     print("[DEBUG] Redis value:", user_data_bytes)
     if not user_data_bytes:
         print("[DEBUG] Redis value is None")

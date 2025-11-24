@@ -1,5 +1,6 @@
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, HTTPException, Depends
 
+from account.adapter.input.web.session_helper import get_current_user
 from account.adapter.input.web.response.account_response import AccountResponse
 from account.application.usecase.account_usecase import AccountUseCase
 
@@ -29,3 +30,7 @@ def get_account_by_oauth_id(oauth_type: str, oauth_id: str):
 @account_router.delete("/{oauth_type}/{oauth_id}")
 def delete_account_by_oauth_id(oauth_type: str, oauth_id: str):
     return usecase.delete_account_by_oauth_id(oauth_type, oauth_id)
+
+@account_router.get("/me")
+def get_account_by_session_id(session_id: str = Depends(get_current_user)):
+    return usecase.get_account_by_session_id(session_id)
