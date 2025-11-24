@@ -25,3 +25,6 @@ class AccountUseCase:
 
     def get_account_by_oauth_id(self, oauth_type:str, oauth_id: str) -> Optional[Account]:
         return self.account_repo.get_by_oauth_id(oauth_type, oauth_id)
+
+    def delete_account_by_oauth_id(self, oauth_type: str, oauth_id: str) -> bool:
+        return self.account_repo.delete_account_by_oauth_id(oauth_type, oauth_id)

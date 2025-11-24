@@ -25,3 +25,7 @@ def get_account_by_oauth_id(oauth_type: str, oauth_id: str):
         created_at=account.created_at,
         role_id=account.role_id
     )
+
+@account_router.delete("/{oauth_type}/{oauth_id}")
+def delete_account_by_oauth_id(oauth_type: str, oauth_id: str):
+    return usecase.delete_account_by_oauth_id(oauth_type, oauth_id)

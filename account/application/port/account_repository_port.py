@@ -9,3 +9,7 @@ class AccountRepositoryPort(ABC):
     @abstractmethod
     def get_by_oauth_id(self, session_id:str, oauth_type: str, user_oauth_id: str) -> Optional[Account]:
         pass
+
+    @abstractmethod
+    def delete_account_by_oauth_id(self, oauth_type: str, oauth_id: str) -> bool:
+        pass

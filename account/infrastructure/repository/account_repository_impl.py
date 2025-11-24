@@ -1,10 +1,10 @@
 from typing import Optional
-
 from account.application.port.account_repository_port import AccountRepositoryPort
 from account.domain.account import Account
 from account.infrastructure.orm.account_orm import AccountORM
 from config.database.session import get_db_session
 from sqlalchemy.orm import Session
+from sqlalchemy import and_
 
 
 class AccountRepositoryImpl(AccountRepositoryPort):
@@ -88,3 +88,15 @@ class AccountRepositoryImpl(AccountRepositoryPort):
             account.updated_at = orm_account.updated_at
             return account
         return None
+
+    def delete_account_by_oauth_id(self, oauth_type: str, oauth_id: str) -> bool:
+        deleted_count = self.db.query(AccountORM).filter(
+            and_(
+                AccountORM.oauth_type == oauth_type,
+                AccountORM.oauth_id == oauth_id
+            )
+        ).delete(synchronize_session=False)
+
+        self.db.commit()
+
+        return deleted_count > 0
