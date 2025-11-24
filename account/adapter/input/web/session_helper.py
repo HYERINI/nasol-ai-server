@@ -11,7 +11,11 @@ def get_current_user(session_id: str = Cookie(None)) -> str:
     print("[DEBUG] Session ID:", session_id)
     if not session_id:
         session_id = str(uuid.uuid4())
-        redis_client.set(session_id, "GUEST", ex=3600)
+        redis_client.hset(
+            session_id,
+            "USER_TOKEN",
+            "GUEST")
+        redis_client.expire(session_id, 24 * 60 * 60)
         return session_id
 
     user_data_bytes = redis_client.get(session_id)

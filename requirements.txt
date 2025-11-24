@@ -15,3 +15,5 @@ PyPDF2
 tensorflow
 torch
 torchvision
+python-multipart
+pypdf

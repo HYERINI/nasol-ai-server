@@ -3,7 +3,6 @@ from dotenv import load_dotenv
 
 from account.adapter.input.web.account_router import account_router
 from config.database.session import Base, engine
-from documents.adapter.input.web.document_router import documents_router
 from documents_multi_agents.adapter.input.web.document_multi_agent_router import documents_multi_agents_router
 from sosial_oauth.adapter.input.web.google_oauth2_router import authentication_router
 
@@ -29,7 +28,6 @@ app.add_middleware(
 
 app.include_router(account_router, prefix="/account")
 app.include_router(authentication_router, prefix="/authentication")
-app.include_router(documents_router, prefix="/documents")
 app.include_router(documents_multi_agents_router, prefix="/documents-multi-agents")
 
 # 앱 실행
