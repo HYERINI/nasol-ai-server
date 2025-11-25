@@ -1,12 +1,16 @@
-from fastapi import APIRouter, HTTPException, Depends
+from fastapi import APIRouter, HTTPException, Depends, Request, Cookie
+from fastapi.responses import JSONResponse
 
 from account.adapter.input.web.session_helper import get_current_user
 from account.adapter.input.web.response.account_response import AccountResponse
 from account.adapter.input.web.request.update_account_request import UpdateAccountRequest
 from account.application.usecase.account_usecase import AccountUseCase
+from config.redis_config import get_redis
+from sosial_oauth.infrastructure.service.google_oauth2_service import GoogleOAuth2Service
 
 account_router = APIRouter()
 usecase = AccountUseCase().get_instance()
+redis_client = get_redis()
 
 @account_router.get("/{oauth_type}/{oauth_id}", response_model=AccountResponse)
 def get_account_by_oauth_id(oauth_type: str, oauth_id: str):
@@ -83,3 +87,75 @@ def get_account_by_session_id(session_id: str = Depends(get_current_user)):
 
     print("[DEBUG] IN ACCOUNT/ME : " , session_id)
     return usecase.get_account_by_session_id(session_id)
+
+@account_router.post("/departure")
+async def departure(request: Request, session_id: str | None = Cookie(None)):
+    print("[DEBUG] Departure (회원탈퇴) called")
+    print("[DEBUG] Request headers:", request.headers)
+
+    if not session_id:
+        print("[DEBUG] No session_id received. Returning error")
+        response = JSONResponse({"success": False, "message": "No session found"}, status_code=400)
+        response.delete_cookie(key="session_id")
+        return response
+
+    # Redis 세션 확인
+    exists = redis_client.exists(session_id)
+    print("[DEBUG] Redis has session_id?", exists)
+
+    if not exists:
+        print("[DEBUG] Session not found in Redis")
+        response = JSONResponse({"success": False, "message": "Session not found"}, status_code=400)
+        response.delete_cookie(key="session_id")
+        return response
+
+    # session_id로 계정 조회
+    account = usecase.get_account_by_session_id(session_id)
+    print("[DEBUG] Account found:", account)
+
+    if not account:
+        print("[DEBUG] Account not found for session_id")
+        # 계정이 없어도 세션과 쿠키는 삭제
+        redis_client.delete(session_id)
+        response = JSONResponse({"success": False, "message": "Account not found"}, status_code=404)
+        response.delete_cookie(key="session_id")
+        return response
+
+    # Google 계정인 경우에만 token revoke 실행
+    if account.oauth_type == "GOOGLE":
+        print("[DEBUG] Google account detected, attempting token revoke")
+        access_token = redis_client.hget(session_id, "USER_TOKEN")
+        print("[DEBUG] Access token from Redis:", access_token)
+
+        if access_token:
+            try:
+                if isinstance(access_token, bytes):
+                    access_token = access_token.decode("utf-8")
+
+                # GUEST 토큰이 아닌 경우에만 revoke 시도
+                if access_token != "GUEST":
+                    GoogleOAuth2Service.revoke_token(access_token)
+                    print("[DEBUG] Google token revoked successfully")
+                else:
+                    print("[DEBUG] Skipping token revoke for GUEST user")
+            except Exception as e:
+                # Token revoke 실패해도 계속 진행 (이미 만료됐을 수 있음)
+                print(f"[WARNING] Failed to revoke Google token: {str(e)}")
+        else:
+            print("[DEBUG] No access token found in Redis for Google account")
+    else:
+        print(f"[DEBUG] Non-Google account ({account.oauth_type}), skipping token revoke")
+
+    # 계정 삭제 (향후 table이 account 외에 더 늘어날 경우 이쪽에 테이블 삭제 로직 추가)
+    deleted = usecase.delete_account_by_oauth_id(account.oauth_type, account.oauth_id)
+    print("[DEBUG] Account deleted:", deleted)
+
+    # Redis 세션 삭제
+    redis_client.delete(session_id)
+    print("[DEBUG] Redis session deleted")
+
+    # 쿠키 삭제와 함께 응답 반환
+    response = JSONResponse({"success": True, "message": "Account deleted successfully"})
+    response.delete_cookie(key="session_id")
+    print("[DEBUG] Cookie deleted from response")
+    return response
