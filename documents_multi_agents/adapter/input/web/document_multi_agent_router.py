@@ -102,6 +102,8 @@ async def assets_on_document(document: str, question: str) -> str:
 규칙:
 - 주어진 문서 본문의 자료를 토대로 한국의 비슷한 소득수준의 재무정보를 분석하여 가이드가 될 수 있는 포토폴리오 자료를 제출하라. 
 - 웹 검색을 사용하여 현재 소득 수준에 대한 포토폴리오 자료, 소득 수준이 10% 상승되었을 때, 20% 상승되었을 때에 대한 미래 예측 자료를 함께 제출하라.
+- 추가적인 질문을 요구하는 문장은 제외하라.
+- -- 등으로 불필요한 줄나눔은 없게 하라.
 """
     return (await ask_gpt(prompt, max_tokens=2500)).strip()
 
@@ -154,27 +156,16 @@ async def analyze_document(session_id: str = Depends(get_current_user)):
     try:
 
         content = redis_client.hgetall(session_id)
-        income_data = {
-            k.split("income:", 1)[1]: v
+        data_str = ", ".join(
+            f"{k.split(':', 1)[-1]}: {v}"
             for k, v in content.items()
-            if k.startswith("income:")
-        }
-        print("DEBUG] Income_data:", income_data)
-
-        income_str = ", ".join(
-            f"{k.split('income:', 1)[1]}: {v}"
-            for k, v in content.items()
-            if k.startswith("income:")
+            if k != "USER_TOKEN"
         )
 
-        print("[DEBUG] Income Data:", income_str)
-        answer = await assets_on_document(income_str,
+        answer = await assets_on_document(data_str,
                                       "현재 내 원천징수영수증 자료야. 이 자료를 토대로 앞으로의 내 미래 자산에 대한 재무 컨설팅을 듣고 싶어. "
                                       "어떤 방식으로 자산을 분배하면 좋을지, 세액을 줄이는 방법은 있을지. 현재의 소득수준이 10%증가했을 때, 20% 증가했을 때를 대비한 미래 예측 시뮬레이션도 있으면 좋겠어. "
                                       "참고 자료는 한국의 비슷한 소득 수준을 가진 사람들에 대한 재무 데이터를 통해서 진행해줘")
-
-
-        print("[DEBUG] Answer: " , answer)
 
         return answer
     except Exception as e:
