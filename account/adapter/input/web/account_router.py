@@ -5,6 +5,7 @@ from account.adapter.input.web.session_helper import get_current_user
 from account.adapter.input.web.response.account_response import AccountResponse
 from account.adapter.input.web.request.update_account_request import UpdateAccountRequest
 from account.application.usecase.account_usecase import AccountUseCase
+from account.infrastructure.orm.account_orm import OAuthProvider
 from config.redis_config import get_redis
 from sosial_oauth.infrastructure.service.google_oauth2_service import GoogleOAuth2Service
 
@@ -122,27 +123,36 @@ async def departure(request: Request, session_id: str | None = Cookie(None)):
         return response
 
     # Google 계정인 경우에만 token revoke 실행
-    if account.oauth_type == "GOOGLE":
+    print(f"[DEBUG] Account oauth_type: '{account.oauth_type}'")
+    print(f"[DEBUG] Checking if oauth_type == OAuthProvider.GOOGLE: {account.oauth_type == OAuthProvider.GOOGLE}")
+
+    if account.oauth_type == OAuthProvider.GOOGLE:
         print("[DEBUG] Google account detected, attempting token revoke")
         access_token = redis_client.hget(session_id, "USER_TOKEN")
-        print("[DEBUG] Access token from Redis:", access_token)
+        print(f"[DEBUG] Access token from Redis (type: {type(access_token)}): {access_token}")
 
         if access_token:
             try:
                 if isinstance(access_token, bytes):
                     access_token = access_token.decode("utf-8")
+                    print(f"[DEBUG] Decoded access token: {access_token[:20]}...")
 
                 # GUEST 토큰이 아닌 경우에만 revoke 시도
                 if access_token != "GUEST":
-                    GoogleOAuth2Service.revoke_token(access_token)
+                    print("[DEBUG] Calling GoogleOAuth2Service.revoke_token()...")
+                    result = GoogleOAuth2Service.revoke_token(access_token)
+                    print(f"[DEBUG] Google token revoke result: {result}")
                     print("[DEBUG] Google token revoked successfully")
                 else:
                     print("[DEBUG] Skipping token revoke for GUEST user")
             except Exception as e:
                 # Token revoke 실패해도 계속 진행 (이미 만료됐을 수 있음)
                 print(f"[WARNING] Failed to revoke Google token: {str(e)}")
+                import traceback
+                print(f"[WARNING] Traceback: {traceback.format_exc()}")
         else:
             print("[DEBUG] No access token found in Redis for Google account")
+            print(f"[DEBUG] All Redis keys for session_id: {redis_client.hkeys(session_id)}")
     else:
         print(f"[DEBUG] Non-Google account ({account.oauth_type}), skipping token revoke")
 
@@ -151,8 +161,9 @@ async def departure(request: Request, session_id: str | None = Cookie(None)):
     print("[DEBUG] Account deleted:", deleted)
 
     # Redis 세션 삭제
-    redis_client.delete(session_id)
-    print("[DEBUG] Redis session deleted")
+    delete_result = redis_client.delete(session_id)
+    print("[DEBUG] Redis delete result:", delete_result)
+    print("[DEBUG] Redis session exists after delete?", redis_client.exists(session_id))
 
     # 쿠키 삭제와 함께 응답 반환
     response = JSONResponse({"success": True, "message": "Account deleted successfully"})
