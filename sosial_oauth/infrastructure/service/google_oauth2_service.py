@@ -2,7 +2,6 @@ import os
 from urllib.parse import urlencode, quote
 
 import requests
-from requests.exceptions import RequestException, Timeout, ConnectionError as RequestsConnectionError
 
 from sosial_oauth.adapter.input.web.request.get_access_token_request import GetAccessTokenRequest
 from sosial_oauth.adapter.input.web.response.access_token import AccessToken
@@ -72,24 +71,14 @@ class GoogleOAuth2Service:
         try:
             resp = requests.post(google_token_url, data=data, timeout=10)
             resp.raise_for_status()
-        except Timeout:
-            raise Exception("Request to Google OAuth token endpoint timed out")
-        except RequestsConnectionError:
-            raise Exception("Failed to connect to Google OAuth token endpoint")
-        except requests.HTTPError:
-            raise Exception(f"Google OAuth token request failed with status {resp.status_code}: {resp.text}")
-        except RequestException as e:
-            raise Exception(f"Unexpected error during Google OAuth token request: {str(e)}")
-        
-        try:
             token_data = resp.json()
-        except ValueError as e:
-            raise Exception(f"Invalid JSON response from Google OAuth token endpoint: {str(e)}")
-        
-        # 필수 필드 검증
-        access_token = token_data.get("access_token")
-        if not access_token:
-            raise ValueError("Access token is missing in the response from Google OAuth")
+
+            # 필수 필드 검증
+            access_token = token_data.get("access_token")
+            if not access_token:
+                raise ValueError("Access token is missing in the response from Google OAuth")
+        except Exception as e:
+            raise Exception(f"Failed to get Google OAuth token: {str(e)}")
         
         return AccessToken(
             access_token=access_token,
@@ -110,18 +99,29 @@ class GoogleOAuth2Service:
         try:
             resp = requests.get(google_userinfo_url, headers=headers, timeout=10)
             resp.raise_for_status()
-        except Timeout:
-            raise Exception("Request to Google userinfo endpoint timed out")
-        except RequestsConnectionError:
-            raise Exception("Failed to connect to Google userinfo endpoint")
-        except requests.HTTPError:
-            raise Exception(f"Google userinfo request failed with status {resp.status_code}: {resp.text}")
-        except RequestException as e:
-            raise Exception(f"Unexpected error during Google userinfo request: {str(e)}")
+            user_profile = resp.json()
+            return user_profile
+        except Exception as e:
+            raise Exception(f"Failed to fetch Google user profile: {str(e)}")
+
+    @staticmethod
+    def revoke_token(access_token: str) -> bool:
+        # Google 액세스 토큰을 revoke (회원탈퇴 시 사용)
+        if not access_token:
+            raise ValueError("Access token is required to revoke")
+
+        revoke_url = "https://oauth2.googleapis.com/revoke"
 
         try:
-            user_profile = resp.json()
-        except ValueError as e:
-            raise Exception(f"Invalid JSON response from Google userinfo endpoint: {str(e)}")
-
-        return user_profile
+            resp = requests.post(
+                revoke_url,
+                params={"token": access_token},
+                headers={"Content-Type": "application/x-www-form-urlencoded"},
+                timeout=10
+            )
+            resp.raise_for_status()
+            print(f"[DEBUG] Google token revoked successfully: {resp.status_code}")
+            return True
+        except Exception as e:
+            print(f"[ERROR] Failed to revoke Google token: {str(e)}")
+            raise Exception(f"Failed to revoke Google token: {str(e)}")
