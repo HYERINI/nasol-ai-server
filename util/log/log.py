@@ -72,7 +72,7 @@ class Log:
                 elapsed = time.time() - start_time
 
                 self.get_logger().info(
-                    f"{func.__name__} returned {result} at {datetime.now().strftime('%Y%m%d%H%M%S')} "
+                    f"{func.__name__} returned at {datetime.now().strftime('%Y%m%d%H%M%S')} "
                     f"(elapsed {elapsed:.3f}s)"
                 )
                 return result
@@ -94,7 +94,7 @@ class Log:
                 elapsed = time.time() - start_time
 
                 self.get_logger().info(
-                    f"{func.__name__} returned {result} at {datetime.now().strftime('%Y%m%d%H%M%S')} "
+                    f"{func.__name__} returned at {datetime.now().strftime('%Y%m%d%H%M%S')} "
                     f"(elapsed {elapsed:.3f}s)"
                 )
                 return result
