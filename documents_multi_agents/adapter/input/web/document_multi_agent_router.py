@@ -103,32 +103,99 @@ async def analyze_document(
         text = extract_text_from_pdf_clean(content)
         if not text:
             raise HTTPException(400, "No text extracted")
+        
+        print(f"[DEBUG] Extracted text length: {len(text)}")
+        print(f"[DEBUG] Extracted text preview: {text[:300]}")  # 처음 300자
 
         # 2. QA (요약 기반)
-        answer = await qa_on_document(text,
-                                      "PDF의 항목과 금액을 급여 : 얼마 비과세소득계 : 얼마 비과세식대 : 얼마 형태로 모든 항목들을 key:value 형태로 요약해줘 "
-                                      "예시로 든 항목만 하는게 아니라 모든 금액 항목들을 모두 다 찾아야 해."
-                                      "이 때 문서 내 모든 금액을 찾아야 하고, 월별 구분이 합계금액과 함께 있을 경우 월별 금액은 무시해. "
-                                      "예시 : "
-                                      "건강보험료: 12123123"
-                                      "직불카드 등: 123123123"
-                                      "급여: 123123"
-                                      "상여: 123123",
-                                      "추론하지 말고 문서 내에서만 답을 찾아라."
-                                      "없으면 문서에 해당 정보 없음 이라고 답해라."
-                                      "문서 내에 있는 모든 정보를 찾아라."
-                                      )
-
+        # type_of_doc에 따라 프롬프트 분기
+        if "소득" in type_of_doc or "income" in type_of_doc.lower():
+            extraction_question = (
+                "PDF에서 소득 관련 항목과 금액만 추출해줘. "
+                "반드시 다음 형식으로만 답변: 항목명: 금액 (한 줄에 하나씩) "
+                "설명, 주석, 별표, 마크다운 등 절대 사용 금지 "
+                "예시: "
+                "급여: 3000000 "
+                "식대: 200000 "
+                "상여: 500000"
+            )
+            extraction_role = (
+                "소득 항목만 포함: 급여, 상여, 식대, 수당, 총급여, 이자소득, 배당소득 "
+                "절대 제외: 보험료, 세금, 공제액 등 차감/지출 항목 "
+                "추론 금지, 문서 내 데이터만 사용 "
+                "월별 구분 있으면 합계만 사용 "
+                "설명문, 주석 절대 금지 - 순수 데이터만 반환"
+            )
+        elif "지출" in type_of_doc or "expense" in type_of_doc.lower():
+            extraction_question = (
+                "PDF에서 지출 관련 항목과 금액만 추출해줘. "
+                "반드시 다음 형식으로만 답변: 항목명: 금액 (한 줄에 하나씩) "
+                "설명, 주석, 별표, 마크다운 등 절대 사용 금지 "
+                "예시: "
+                "국민연금보험료: 500000 "
+                "신용카드: 1000000 "
+                "건강보험료: 300000"
+            )
+            extraction_role = (
+                "지출 항목만 포함: 보험료, 카드사용액, 세금, 공과금, 대출, 월세, 통신비 "
+                "절대 제외: 급여, 소득, 수당 등 수입 항목 "
+                "추론 금지, 문서 내 데이터만 사용 "
+                "월별 구분 있으면 합계만 사용 "
+                "설명문, 주석 절대 금지 - 순수 데이터만 반환"
+            )
+        else:
+            # 타입을 모를 경우 기본 프롬프트
+            extraction_question = (
+                "PDF의 항목과 금액을 추출해줘. "
+                "형식: 항목명: 금액 (한 줄에 하나씩)"
+            )
+            extraction_role = (
+                "문서 내 모든 금액 찾기 "
+                "월별 구분 있으면 합계만 사용 "
+                "설명문 금지 - 순수 데이터만"
+            )
+        
+        answer = await qa_on_document(text, extraction_question, extraction_role)
+        
+        print(f"[DEBUG] AI raw answer: {answer[:500]}")  # 처음 500자만
+        
+        # AI 응답 전처리: 마크다운, 설명문 제거
+        answer = answer.replace("**", "")  # 볼드 제거
+        answer = answer.replace("*", "")   # 이탤릭 제거
+        answer = re.sub(r'※.*', '', answer)  # 주석 제거
+        answer = re.sub(r'---.*', '', answer, flags=re.DOTALL)  # 구분선 이후 제거
+        
+        print(f"[DEBUG] AI cleaned answer: {answer[:500]}")
+        
         pattern = re.compile(r'([가-힣\w\s]+)\s*:\s*([\d,]+)')
-
+        matches = list(pattern.finditer(answer))
+        
+        print(f"[DEBUG] Pattern matches found: {len(matches)}")
+        
         # 추출된 항목들을 저장하고 동시에 수집
         extracted_items = {}
+        duplicate_keywords = ["총급여", "총소득", "합계", "총합", "총액"]  # 중복 가능성 있는 키워드
+        
         try:
-            for match in pattern.finditer(answer):
+            for match in matches:
                 field, value = match.groups()
                 field_clean = field.strip()
                 value_clean = value.replace(",", "").strip()
-
+                
+                # 중복 체크: 같은 금액의 유사 항목이 이미 있으면 스킵
+                is_duplicate = False
+                for existing_field, existing_value in extracted_items.items():
+                    if value_clean == existing_value:  # 금액이 같고
+                        # 하나가 다른 하나의 "합계" 버전이면 중복으로 간주
+                        if any(keyword in field_clean for keyword in duplicate_keywords) or \
+                           any(keyword in existing_field for keyword in duplicate_keywords):
+                            is_duplicate = True
+                            print(f"[DEBUG] Skipping duplicate: {field_clean} (same as {existing_field}: {value_clean})")
+                            break
+                
+                if is_duplicate:
+                    continue
+                
                 # 암호화된 키/값 생성
                 encrypted_key = crypto.enc_data(f"{type_of_doc}:{field_clean}")
                 encrypted_value = crypto.enc_data(value_clean)
@@ -153,6 +220,19 @@ async def analyze_document(
             traceback.print_exc()
 
         redis_client.expire(session_id, 24 * 60 * 60)
+        
+        print(f"[DEBUG] Total extracted_items: {len(extracted_items)}")
+        
+        if not extracted_items:
+            print("[WARNING] No items were extracted from PDF!")
+            return {
+                "success": False,
+                "message": "PDF에서 데이터를 추출하지 못했습니다. PDF 형식을 확인해주세요.",
+                "session_id": session_id,
+                "document_type": type_of_doc,
+                "extracted_count": 0,
+                "categorized_data": {}
+            }
 
         # AI로 카테고리 분류
         from documents_multi_agents.domain.service.financial_analyzer_service import FinancialAnalyzerService
@@ -530,26 +610,72 @@ async def get_combined_result(session_id: str = Depends(get_current_user)):
                 import traceback
                 traceback.print_exc()
                 continue
-
+        
+        print(f"[DEBUG] Total income items: {len(income_items)}")
+        print(f"[DEBUG] Total expense items: {len(expense_items)}")
+        
+        # 소득 항목 중 지출성 항목을 지출로 재분류
+        # 1. 보험료
+        insurance_keywords = ["보험료", "보험", "연금"]
+        # 2. 세금
+        tax_keywords = ["소득세", "지방소득세", "세액"]
+        
+        items_to_move = []
+        
+        for field_name, value in list(income_items.items()):
+            should_move = False
+            
+            # 보험료 관련 항목 체크
+            if any(keyword in field_name for keyword in insurance_keywords):
+                # 공제 금액이 아닌 실제 보험료만 이동
+                if "공제" not in field_name and "대상" not in field_name:
+                    should_move = True
+            
+            # 세금 관련 항목 체크
+            if any(keyword in field_name for keyword in tax_keywords):
+                # 공제 금액이 아닌 실제 세금만 이동
+                if "공제" not in field_name and "과세표준" not in field_name and "산출" not in field_name:
+                    should_move = True
+            
+            if should_move:
+                items_to_move.append(field_name)
+                print(f"[DEBUG] Moving to expense: {field_name} = {value}")
+        
+        # 실제 이동
+        for field_name in items_to_move:
+            expense_items[field_name] = income_items.pop(field_name)
+        
+        print(f"[DEBUG] After reclassification - income: {len(income_items)}, expense: {len(expense_items)}")
+        
         # AI로 카테고리 분류
         from documents_multi_agents.domain.service.financial_analyzer_service import FinancialAnalyzerService
 
         analyzer = FinancialAnalyzerService()
-
+        
+        print(f"[DEBUG] Before AI categorization - income_items: {income_items}")
+        print(f"[DEBUG] Before AI categorization - expense_items: {expense_items}")
+        
         income_categorized = analyzer._categorize_income(income_items) if income_items else {}
         expense_categorized = analyzer._categorize_expense(expense_items) if expense_items else {}
-
+        
+        print(f"[DEBUG] After AI categorization - income_categorized keys: {income_categorized.keys()}")
+        print(f"[DEBUG] After AI categorization - expense_categorized keys: {expense_categorized.keys()}")
+        print(f"[DEBUG] income_categorized 총소득: {income_categorized.get('총소득')}")
+        print(f"[DEBUG] expense_categorized 총지출: {expense_categorized.get('총지출')}")
+        
         # 요약 정보 계산 (안전한 타입 변환) - 한글 키 우선, 없으면 영문 키
         try:
-            total_income = int(income_categorized.get("총소득") or income_categorized.get("total_income", 0)) if (
-                        income_categorized.get("총소득") or income_categorized.get("total_income")) else 0
-        except (ValueError, TypeError):
+            total_income = int(income_categorized.get("총소득") or income_categorized.get("total_income", 0)) if (income_categorized.get("총소득") or income_categorized.get("total_income")) else 0
+            print(f"[DEBUG] Calculated total_income: {total_income}")
+        except (ValueError, TypeError) as e:
+            print(f"[ERROR] Failed to calculate total_income: {e}")
             total_income = 0
 
         try:
-            total_expense = int(expense_categorized.get("총지출") or expense_categorized.get("total_expense", 0)) if (
-                        expense_categorized.get("총지출") or expense_categorized.get("total_expense")) else 0
-        except (ValueError, TypeError):
+            total_expense = int(expense_categorized.get("총지출") or expense_categorized.get("total_expense", 0)) if (expense_categorized.get("총지출") or expense_categorized.get("total_expense")) else 0
+            print(f"[DEBUG] Calculated total_expense: {total_expense}")
+        except (ValueError, TypeError) as e:
+            print(f"[ERROR] Failed to calculate total_expense: {e}")
             total_expense = 0
 
         surplus = total_income - total_expense
