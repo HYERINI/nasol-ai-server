@@ -1,12 +1,14 @@
 import os
 import json
 import re
-from typing import Dict, List, Any
+from typing import Dict, Any
 from openai import OpenAI
 from dotenv import load_dotenv
 
-load_dotenv()
+from util.log.log import Log
 
+load_dotenv()
+logger = Log.get_logger()
 
 class FinancialAnalyzerService:
     """
@@ -165,8 +167,7 @@ class FinancialAnalyzerService:
             )
             
             result_text = response.choices[0].message.content.strip()
-            print(f"[DEBUG] AI Response (income): {result_text[:500]}")  # 처음 500자만 로그
-            
+
             # JSON 추출
             if "```json" in result_text:
                 result_text = result_text.split("```json")[1].split("```")[0].strip()
@@ -175,16 +176,15 @@ class FinancialAnalyzerService:
             
             # JSON 수정 (잘못된 문법 자동 수정)
             result_text = self._fix_json_string(result_text)
-            print(f"[DEBUG] Fixed JSON: {result_text[:500]}")
-            
+
             # JSON 파싱 시도
             try:
                 result = json.loads(result_text)
                 # 언더스코어를 띄어쓰기로 변환
                 return self._clean_item_names(result)
             except json.JSONDecodeError as json_err:
-                print(f"[ERROR] JSON parsing failed: {json_err}")
-                print(f"[ERROR] Raw response text: {result_text}")
+                logger.error(f"[ERROR] JSON parsing failed: {json_err}")
+                logger.error(f"[ERROR] Raw response text: {result_text}")
                 # JSON 파싱 실패 시 원본 데이터 반환
                 return {
                     "error": f"AI 응답을 파싱할 수 없습니다: {str(json_err)}",
@@ -200,7 +200,7 @@ class FinancialAnalyzerService:
                     "총소득": sum(int(v) for v in income_items.values() if v.isdigit())
                 }
         except Exception as e:
-            print(f"[ERROR] Income categorization failed: {str(e)}")
+            logger.error(f"[ERROR] Income categorization failed: {str(e)}")
             return {
                 "error": str(e),
                 "raw_items": income_items,
@@ -306,8 +306,7 @@ class FinancialAnalyzerService:
             )
             
             result_text = response.choices[0].message.content.strip()
-            print(f"[DEBUG] AI Response (expense): {result_text[:500]}")  # 처음 500자만 로그
-            
+
             # JSON 추출
             if "```json" in result_text:
                 result_text = result_text.split("```json")[1].split("```")[0].strip()
@@ -316,16 +315,15 @@ class FinancialAnalyzerService:
             
             # JSON 수정 (잘못된 문법 자동 수정)
             result_text = self._fix_json_string(result_text)
-            print(f"[DEBUG] Fixed JSON: {result_text[:500]}")
-            
+
             # JSON 파싱 시도
             try:
                 result = json.loads(result_text)
                 # 언더스코어를 띄어쓰기로 변환
                 return self._clean_item_names(result)
             except json.JSONDecodeError as json_err:
-                print(f"[ERROR] JSON parsing failed: {json_err}")
-                print(f"[ERROR] Raw response text: {result_text}")
+                logger.error(f"[ERROR] JSON parsing failed: {json_err}")
+                logger.error(f"[ERROR] Raw response text: {result_text}")
                 # JSON 파싱 실패 시 원본 데이터 반환
                 return {
                     "error": f"AI 응답을 파싱할 수 없습니다: {str(json_err)}",
@@ -343,7 +341,7 @@ class FinancialAnalyzerService:
                     "총지출": sum(int(v) for v in expense_items.values() if v.isdigit())
                 }
         except Exception as e:
-            print(f"[ERROR] Expense categorization failed: {str(e)}")
+            logger.error(f"[ERROR] Expense categorization failed: {str(e)}")
             return {
                 "error": str(e),
                 "raw_items": expense_items,
@@ -455,7 +453,7 @@ class FinancialAnalyzerService:
                 
             return json.loads(result_text)
         except Exception as e:
-            print(f"[ERROR] Recommendation generation failed: {str(e)}")
+            logger.error(f"[ERROR] Recommendation generation failed: {str(e)}")
             return {"error": str(e)}
     
     def _generate_summary(self, income_data: Dict, expense_data: Dict) -> Dict[str, Any]:
