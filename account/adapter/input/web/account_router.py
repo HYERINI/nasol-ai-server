@@ -89,6 +89,19 @@ def get_account_by_session_id(session_id: str = Depends(get_current_user)):
 
     return usecase.get_account_by_session_id(session_id)
 
+@account_router.delete("/session_out")
+def delete_session_by_session_id(session_id: str = Depends(get_current_user)):
+    session_id = "bc4e533a-4279-4b93-9e51-81abcc11cb4e"
+    delete_result = redis_client.delete(session_id)
+    logger.debug("Redis delete result:", delete_result)
+    logger.debug("Redis session exists after delete?", redis_client.exists(session_id))
+
+    # 쿠키 삭제와 함께 응답 반환
+    response = JSONResponse({"success": True, "message": "Account deleted successfully"})
+    response.delete_cookie(key="session_id")
+    logger.debug("Cookie deleted from response")
+    return response
+
 @account_router.post("/departure")
 async def departure(request: Request, session_id: str | None = Cookie(None)):
     logger.debug("Departure called")
