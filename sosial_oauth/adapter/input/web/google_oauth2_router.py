@@ -24,7 +24,7 @@ async def redirect_to_google():
 async def logout_to_google(request: Request, session_id: str | None = Cookie(None)):
 
     logger.info("Logout called")
-    logger.info("Request headers:", request.headers)
+    logger.info("Request headers: %s", request.headers)
 
     if not session_id:
         logger.debug("No session_id received. Returning logged_out: False")
@@ -33,11 +33,11 @@ async def logout_to_google(request: Request, session_id: str | None = Cookie(Non
         return response
 
     exists = redis_client.exists(session_id)
-    logger.debug("Redis has session_id?", exists)
+    logger.debug("Redis has session_id? %s", exists)
 
     if exists:
         redis_client.delete(session_id)
-        logger.debug("Redis session deleted:", redis_client.exists(session_id))
+        logger.debug("Redis session deleted: %s", redis_client.exists(session_id))
 
     # 쿠키 삭제와 함께 응답 반환
     response = JSONResponse({"logged_out": bool(exists)})
@@ -75,7 +75,7 @@ async def process_google_redirect(
         access_token.access_token,
     )
     redis_client.expire(session_id, 24 * 60 * 60)
-    logger.debug("Session saved in Redis:", redis_client.exists(session_id))
+    logger.debug("Session saved in Redis: %s", redis_client.exists(session_id))
 
     # 브라우저 쿠키 발급
     response = RedirectResponse("http://localhost:3000")
@@ -95,7 +95,7 @@ async def auth_status(request: Request, session_id: str | None = Cookie(None)):
     logger.info("/status called")
 
     # 모든 요청 헤더 출력
-    logger.info("Request headers:", request.headers)
+    logger.info("Request headers: %s", request.headers)
 
     # 쿠키 확인
     logger.debug("Received session_id cookie")
@@ -105,6 +105,6 @@ async def auth_status(request: Request, session_id: str | None = Cookie(None)):
         return {"logged_in": False}
 
     exists = redis_client.exists(session_id)
-    logger.debug("Redis session exists:", exists)
+    logger.debug("Redis session exists: %s", exists)
 
     return {"logged_in": bool(exists)}
