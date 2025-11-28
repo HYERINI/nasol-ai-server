@@ -1,4 +1,4 @@
-from fastapi import APIRouter, Depends, UploadFile, HTTPException, Form, Response
+from fastapi import APIRouter, Depends, UploadFile, HTTPException, Form, Response,Header
 from openai import OpenAI
 from pypdf import PdfReader
 import asyncio
@@ -9,6 +9,7 @@ import uuid
 from config.crypto import Crypto
 from config.redis_config import get_redis
 from account.adapter.input.web.session_helper import get_current_user
+from util.security.crsf import  verify_csrf_token
 
 from documents_multi_agents.adapter.input.web.request.insert_income_request import InsertDocumentRequest
 from documents_multi_agents.domain.service.prompt_templates import PromptTemplates
@@ -21,7 +22,7 @@ documents_multi_agents_router = APIRouter(tags=["documents_multi_agents_router"]
 redis_client = get_redis()
 client = OpenAI()
 crypto = Crypto.get_instance()
-
+MAX_FILE_SIZE = 5 * 1024 * 1024  # 5MB
 
 # -----------------------
 # PDF 텍스트 추출
@@ -86,8 +87,12 @@ async def analyze_document(
         response: Response,
         file: UploadFile,
         type_of_doc: str = Form(...),
-        session_id: str = Depends(get_current_user)
+        session_id: str = Depends(get_current_user),
+        x_csrf_token:  str | None = Header(None)
 ):
+    # CSRF 검증
+    verify_csrf_token(x_csrf_token)
+
     try:
         # 쿠키에 session_id 명시적으로 설정
         response.set_cookie(
@@ -102,10 +107,13 @@ async def analyze_document(
         if not content:
             raise HTTPException(400, "Empty file upload")
 
+        if len(content) > MAX_FILE_SIZE:
+            raise HTTPException(413, "File too large")
+
         text = extract_text_from_pdf_clean(content)
         if not text:
             raise HTTPException(400, "No text extracted")
-        
+
         print(f"[DEBUG] Extracted text length: {len(text)}")
         print(f"[DEBUG] Extracted text preview: {text[:300]}")  # 처음 300자
 
@@ -156,48 +164,49 @@ async def analyze_document(
                 "월별 구분 있으면 합계만 사용 "
                 "설명문 금지 - 순수 데이터만"
             )
-        
+
         answer = await qa_on_document(text, extraction_question, extraction_role)
-        
+
         print(f"[DEBUG] AI raw answer: {answer[:500]}")  # 처음 500자만
-        
+
         # AI 응답 전처리: 마크다운, 설명문 제거
         answer = answer.replace("**", "")  # 볼드 제거
-        answer = answer.replace("*", "")   # 이탤릭 제거
+        answer = answer.replace("*", "")  # 이탤릭 제거
         answer = re.sub(r'※.*', '', answer)  # 주석 제거
         answer = re.sub(r'---.*', '', answer, flags=re.DOTALL)  # 구분선 이후 제거
-        
+
         print(f"[DEBUG] AI cleaned answer: {answer[:500]}")
-        
+
         pattern = re.compile(r'([가-힣\w\s]+)\s*:\s*([\d,]+)')
         matches = list(pattern.finditer(answer))
-        
+
         print(f"[DEBUG] Pattern matches found: {len(matches)}")
-        
+
         # 추출된 항목들을 저장하고 동시에 수집
         extracted_items = {}
         duplicate_keywords = ["총급여", "총소득", "합계", "총합", "총액"]  # 중복 가능성 있는 키워드
-        
+
         try:
             for match in matches:
                 field, value = match.groups()
                 field_clean = field.strip()
                 value_clean = value.replace(",", "").strip()
-                
+
                 # 중복 체크: 같은 금액의 유사 항목이 이미 있으면 스킵
                 is_duplicate = False
                 for existing_field, existing_value in extracted_items.items():
                     if value_clean == existing_value:  # 금액이 같고
                         # 하나가 다른 하나의 "합계" 버전이면 중복으로 간주
                         if any(keyword in field_clean for keyword in duplicate_keywords) or \
-                           any(keyword in existing_field for keyword in duplicate_keywords):
+                                any(keyword in existing_field for keyword in duplicate_keywords):
                             is_duplicate = True
-                            print(f"[DEBUG] Skipping duplicate: {field_clean} (same as {existing_field}: {value_clean})")
+                            print(
+                                f"[DEBUG] Skipping duplicate: {field_clean} (same as {existing_field}: {value_clean})")
                             break
-                
+
                 if is_duplicate:
                     continue
-                
+
                 # 암호화된 키/값 생성
                 encrypted_key = crypto.enc_data(f"{type_of_doc}:{field_clean}")
                 encrypted_value = crypto.enc_data(value_clean)
@@ -222,15 +231,15 @@ async def analyze_document(
             traceback.print_exc()
 
         redis_client.expire(session_id, 24 * 60 * 60)
-        
+
         # 🔥 새 문서 업로드 시 기존 캐시 무효화
         # 사용자 데이터가 변경되었으므로 모든 AI 분석 캐시를 제거
         logger.info(f"Invalidating cache for session: {session_id}")
         invalidated_count = AICache.invalidate_user_cache(session_id)
         logger.info(f"Invalidated {invalidated_count} cache entries")
-        
+
         print(f"[DEBUG] Total extracted_items: {len(extracted_items)}")
-        
+
         if not extracted_items:
             print("[WARNING] No items were extracted from PDF!")
             return {
@@ -302,7 +311,7 @@ async def analyze_document(session_id: str = Depends(get_current_user)):
         # 🔥 캐시 확인
         cache_key = AICache.generate_cache_key(data_str, "future-assets")
         cached_response = AICache.get_cached_response(cache_key)
-        
+
         if cached_response:
             return cached_response
 
@@ -355,7 +364,7 @@ async def analyze_document(session_id: str = Depends(get_current_user)):
         # 🔥 캐시 확인
         cache_key = AICache.generate_cache_key(data_str, "tax-credit")
         cached_response = AICache.get_cached_response(cache_key)
-        
+
         if cached_response:
             return cached_response
 
@@ -408,7 +417,7 @@ async def analyze_document(session_id: str = Depends(get_current_user)):
         # 🔥 캐시 확인
         cache_key = AICache.generate_cache_key(data_str, "deduction-expectation")
         cached_response = AICache.get_cached_response(cache_key)
-        
+
         if cached_response:
             return cached_response
 
@@ -724,74 +733,77 @@ async def get_combined_result(session_id: str = Depends(get_current_user)):
                     elif "지출" in doc_type or "expense" in doc_type.lower():
                         expense_items[field_name] = value_plain
             except Exception as decrypt_error:
-                logger.error(f"[ERROR] Decryption failed for key: {key_str[:50] if 'key_str' in locals() else 'unknown'}")
+                logger.error(
+                    f"[ERROR] Decryption failed for key: {key_str[:50] if 'key_str' in locals() else 'unknown'}")
                 logger.error(f"[ERROR] Error: {str(decrypt_error)}")
                 import traceback
                 traceback.print_exc()
                 continue
-        
+
         print(f"[DEBUG] Total income items: {len(income_items)}")
         print(f"[DEBUG] Total expense items: {len(expense_items)}")
-        
+
         # 소득 항목 중 지출성 항목을 지출로 재분류
         # 1. 보험료
         insurance_keywords = ["보험료", "보험", "연금"]
         # 2. 세금
         tax_keywords = ["소득세", "지방소득세", "세액"]
-        
+
         items_to_move = []
-        
+
         for field_name, value in list(income_items.items()):
             should_move = False
-            
+
             # 보험료 관련 항목 체크
             if any(keyword in field_name for keyword in insurance_keywords):
                 # 공제 금액이 아닌 실제 보험료만 이동
                 if "공제" not in field_name and "대상" not in field_name:
                     should_move = True
-            
+
             # 세금 관련 항목 체크
             if any(keyword in field_name for keyword in tax_keywords):
                 # 공제 금액이 아닌 실제 세금만 이동
                 if "공제" not in field_name and "과세표준" not in field_name and "산출" not in field_name:
                     should_move = True
-            
+
             if should_move:
                 items_to_move.append(field_name)
                 print(f"[DEBUG] Moving to expense: {field_name} = {value}")
-        
+
         # 실제 이동
         for field_name in items_to_move:
             expense_items[field_name] = income_items.pop(field_name)
-        
+
         print(f"[DEBUG] After reclassification - income: {len(income_items)}, expense: {len(expense_items)}")
-        
+
         # AI로 카테고리 분류
         from documents_multi_agents.domain.service.financial_analyzer_service import FinancialAnalyzerService
 
         analyzer = FinancialAnalyzerService()
-        
+
         print(f"[DEBUG] Before AI categorization - income_items: {income_items}")
         print(f"[DEBUG] Before AI categorization - expense_items: {expense_items}")
-        
+
         income_categorized = analyzer._categorize_income(income_items) if income_items else {}
         expense_categorized = analyzer._categorize_expense(expense_items) if expense_items else {}
-        
+
         print(f"[DEBUG] After AI categorization - income_categorized keys: {income_categorized.keys()}")
         print(f"[DEBUG] After AI categorization - expense_categorized keys: {expense_categorized.keys()}")
         print(f"[DEBUG] income_categorized 총소득: {income_categorized.get('총소득')}")
         print(f"[DEBUG] expense_categorized 총지출: {expense_categorized.get('총지출')}")
-        
+
         # 요약 정보 계산 (안전한 타입 변환) - 한글 키 우선, 없으면 영문 키
         try:
-            total_income = int(income_categorized.get("총소득") or income_categorized.get("total_income", 0)) if (income_categorized.get("총소득") or income_categorized.get("total_income")) else 0
+            total_income = int(income_categorized.get("총소득") or income_categorized.get("total_income", 0)) if (
+                        income_categorized.get("총소득") or income_categorized.get("total_income")) else 0
             print(f"[DEBUG] Calculated total_income: {total_income}")
         except (ValueError, TypeError) as e:
             print(f"[ERROR] Failed to calculate total_income: {e}")
             total_income = 0
 
         try:
-            total_expense = int(expense_categorized.get("총지출") or expense_categorized.get("total_expense", 0)) if (expense_categorized.get("총지출") or expense_categorized.get("total_expense")) else 0
+            total_expense = int(expense_categorized.get("총지출") or expense_categorized.get("total_expense", 0)) if (
+                        expense_categorized.get("총지출") or expense_categorized.get("total_expense")) else 0
             print(f"[DEBUG] Calculated total_expense: {total_expense}")
         except (ValueError, TypeError) as e:
             print(f"[ERROR] Failed to calculate total_expense: {e}")
@@ -825,6 +837,7 @@ async def get_combined_result(session_id: str = Depends(get_current_user)):
         raise
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"{type(e).__name__}: {str(e)}")
+
 
 # -----------------------
 # API 엔드포인트 - 세액공제 가능 항목 체크리스트
@@ -918,7 +931,7 @@ async def tax_credit_checklist_markdown(session_id: str = Depends(get_current_us
 
 - "가능 여부"는 반드시 **✔️** 또는 **❌**  
 - 이유는 반드시 **100자 이내**  
-- 데이터 없는 항목은 "문서에 관련 항목 없음"처럼 명확히 표현  
+- 데이터 없는 항목은 “문서에 관련 항목 없음”처럼 명확히 표현  
 
 ---
 
@@ -926,18 +939,18 @@ async def tax_credit_checklist_markdown(session_id: str = Depends(get_current_us
 - 표 외의 불필요한 문단 추가 금지
 - 표 아래에 설명 추가 금지
 - 주관적 조언 또는 추가 질문 금지
-- 출력 형식은 반드시 "설명 → 표" 순서
+- 출력 형식은 반드시 “설명 → 표” 순서
 
 ---
 
-위 지침을 100% 준수하여 "설명 섹션 + 마크다운 표" 두 가지를 출력하세요.
+위 지침을 100% 준수하여 “설명 섹션 + 마크다운 표” 두 가지를 출력하세요.
 
 """
 
         answer = await qa_on_document(
             data_str,
             question,
-            '출력은 반드시 "설명 섹션 + 마크다운 표" 형태로만 작성하라.'
+            "출력은 반드시 “설명 섹션 + 마크다운 표” 형태로만 작성하라."
         )
 
         return answer

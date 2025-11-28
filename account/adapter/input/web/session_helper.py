@@ -9,7 +9,7 @@ from util.log.log import Log
 logger = Log.get_logger()
 def get_current_user(session_id: str = Cookie(None)) -> str:
 
-    logger.debug("Session ID from cookie exists?: ", session_id is not None)
+    logger.debug("Session ID from cookie exists?: %s", session_id is not None)
     # 1. 쿠키에 session_id가 없는 경우 → 새로 생성
     if not session_id:
         session_id = str(uuid.uuid4())

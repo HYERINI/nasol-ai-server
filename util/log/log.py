@@ -16,7 +16,7 @@ class Log:
             return cls._logger
 
         logger = logging.getLogger("server")
-        logger.setLevel(logging.INFO)
+        logger.setLevel(logging.DEBUG)
 
         if not logger.handlers:
             GREEN = "\033[92m"
