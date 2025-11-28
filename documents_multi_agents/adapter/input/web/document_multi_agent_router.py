@@ -1,4 +1,4 @@
-from fastapi import APIRouter, Depends, UploadFile, HTTPException, Form, Response,Header
+from fastapi import APIRouter, Depends, UploadFile, HTTPException, Form, Response, Header, Request
 from openai import OpenAI
 from pypdf import PdfReader
 import asyncio
@@ -12,7 +12,9 @@ from account.adapter.input.web.session_helper import get_current_user
 from util.security.crsf import  verify_csrf_token
 
 from documents_multi_agents.adapter.input.web.request.insert_income_request import InsertDocumentRequest
+from documents_multi_agents.domain.service.prompt_templates import PromptTemplates
 from util.log.log import Log
+from util.cache.ai_cache import AICache
 
 log_util = Log()
 logger = Log.get_logger()
@@ -82,6 +84,7 @@ async def qa_on_document(document: str, question: str, role: str) -> str:
 @documents_multi_agents_router.post("/analyze")
 @log_util.logging_decorator
 async def analyze_document(
+        request: Request,
         response: Response,
         file: UploadFile,
         type_of_doc: str = Form(...),
@@ -89,7 +92,7 @@ async def analyze_document(
         x_csrf_token:  str | None = Header(None)
 ):
     # CSRF 검증
-    verify_csrf_token(x_csrf_token)
+    verify_csrf_token(request, x_csrf_token)
 
     try:
         # 쿠키에 session_id 명시적으로 설정
@@ -230,6 +233,12 @@ async def analyze_document(
 
         redis_client.expire(session_id, 24 * 60 * 60)
 
+        # 🔥 새 문서 업로드 시 기존 캐시 무효화
+        # 사용자 데이터가 변경되었으므로 모든 AI 분석 캐시를 제거
+        logger.info(f"Invalidating cache for session: {session_id}")
+        invalidated_count = AICache.invalidate_user_cache(session_id)
+        logger.info(f"Invalidated {invalidated_count} cache entries")
+
         print(f"[DEBUG] Total extracted_items: {len(extracted_items)}")
 
         if not extracted_items:
@@ -300,21 +309,25 @@ async def analyze_document(session_id: str = Depends(get_current_user)):
 
         data_str = ", ".join(pairs)
 
-        answer = await qa_on_document(data_str,
-                                      "현재 내 소득/지출 자료야. 이 자료를 토대로 앞으로의 내 미래 자산에 대한 재무 컨설팅을 듣고 싶어. "
-                                      "어떤 방식으로 자산을 분배하면 좋을지, 세액을 줄이는 방법은 있을지. 현재의 소득수준이 10%증가했을 때, 20% 증가했을 때를 대비한 미래 예측 시뮬레이션도 있으면 좋겠어. "
-                                      "참고 자료는 한국의 비슷한 소득 수준을 가진 사람들에 대한 재무 데이터를 통해서 진행해줘",
-                                      "주어진 문서 본문의 자료를 토대로 한국의 비슷한 소득수준의 재무정보를 분석하여 가이드가 될 수 있는 포토폴리오 자료를 제출하라."
-                                      "웹 검색을 사용하여 현재 소득 수준에 대한 포토폴리오 자료, 소득 수준이 10% 상승되었을 때, 20% 상승되었을 때에 대한 미래 예측 자료를 함께 제출하라."
-                                      "추가적인 질문을 요구하는 문장은 제외하라."
-                                      "-- 등으로 불필요한 줄나눔은 없게 하라."
-                                      )
+        # 🔥 캐시 확인
+        cache_key = AICache.generate_cache_key(data_str, "future-assets")
+        cached_response = AICache.get_cached_response(cache_key)
+
+        if cached_response:
+            return cached_response
+
+        # 캐시 미스 - GPT 호출
+        question, role = PromptTemplates.get_future_assets_prompt()
+        answer = await qa_on_document(data_str, question, role)
 
         # AI 응답 전처리: 마크다운, 설명문 제거
         answer = answer.replace("**", "")  # 볼드 제거
         answer = answer.replace("*", "")   # 이탤릭 제거
         answer = re.sub(r'※.*', '', answer)  # 주석 제거
         answer = re.sub(r'---.*', '', answer, flags=re.DOTALL)  # 구분선 이후 제거
+
+        # 🔥 캐시 저장 (24시간)
+        AICache.set_cached_response(cache_key, answer, ttl=86400)
 
         return answer
     except Exception as e:
@@ -349,38 +362,25 @@ async def analyze_document(session_id: str = Depends(get_current_user)):
 
         data_str = ", ".join(pairs)
 
-        answer = await qa_on_document(data_str,
-                                      "주어진 문서 본문을 바탕으로 내가 올린 자료 중 한국의 연말정산 소득공제 항목 중 받을 수 있는 혜택이 남아있다면 그 공제 가능 금액이 큰 순서대로 나열해줘. "
-                                      "이 때 해당 세액공제 방법에 대한 간략한 설명을 100자 이내로 첨부해줘. 소득공제 가능 항목은 연말정산 홈텍스 시스템의 자료를 참조해. "
-                                      "가능한 세액공제 항목은 다음과 같아. "
-                                      "1. 자녀 세액공제"
-                                      "2. 연금계좌 세액공제"
-                                      "3. 월세 세액공제"
-                                      "4. 보험료 세액공제"
-                                      "5. 의료비 세액공제"
-                                      "6. 교육비 세액공제"
-                                      "7. 기부금 세액공제"
-                                      "8. 혼인 세액공제"
-                                      "9. 중소기업 취업자 소득세 감면"
-                                      "10. 근로소득세액공제"
-                                      "주어진 문서 본문에서 위 10가지 항목에 해당하는 것이 없다면 그 항목과 항목에 대한 설명, 해당 항목에서 최대로 받을 수 있는 세액공제 가능 금액을 표시해 "
-                                      "(EX; 연금자료 세액공제 = 6,000,000)"
-                                      "주어진 문서 본문에서 위 10가지 항목 중 해당하는 것이 있으며 그 공제액이 전체 가능 세액공제 가능 금액과 같다면 제외해"
-                                      "주어진 문서 본문에서 위 10가지 항목 중 해당하지만 최대 세액공제 가능 금액 미만이라면 잔여 세액공제 가능 금액을 표기해"
-                                      "(EX; 본문 자료의 연금자료 세액공제 = 1,000,000 일 경우 5,000,000)"
-                                      "주어진 문서 본문의 항목과 내가 제시한 10가지 항목이 일치하지 않아도 유사도로 0.9 이상이라면 표기해 "
-                                      "EX) 혼인 세액공제 = 결혼세액공제"
-                                      "참고할 사이트는 https://www.nts.go.kr/nts/cm/cntnts/cntntsView.do?mi=6596&cntntsId=7875 국세청 공식 사이트야",
-                                      "주어진 문서 본문의 자료를 토대로 질문에 답변하라."
-                                      "추가적인 질문을 요구하는 문장은 제외하라."
-                                      "-- 등으로 불필요한 줄나눔은 없게 하라."
-                                      )
+        # 🔥 캐시 확인
+        cache_key = AICache.generate_cache_key(data_str, "tax-credit")
+        cached_response = AICache.get_cached_response(cache_key)
+
+        if cached_response:
+            return cached_response
+
+        # 캐시 미스 - GPT 호출
+        question, role = PromptTemplates.get_tax_credit_prompt()
+        answer = await qa_on_document(data_str, question, role)
 
         # AI 응답 전처리: 마크다운, 설명문 제거
         answer = answer.replace("**", "")  # 볼드 제거
         answer = answer.replace("*", "")   # 이탤릭 제거
         answer = re.sub(r'※.*', '', answer)  # 주석 제거
         answer = re.sub(r'---.*', '', answer, flags=re.DOTALL)  # 구분선 이후 제거
+
+        # 🔥 캐시 저장 (24시간)
+        AICache.set_cached_response(cache_key, answer, ttl=86400)
 
         return answer
     except Exception as e:
@@ -415,21 +415,25 @@ async def analyze_document(session_id: str = Depends(get_current_user)):
 
         data_str = ", ".join(pairs)
 
-        answer = await qa_on_document(data_str,
-                                      "주어진 문서 본문을 활용하여 연말정산에서 받을 수 있는 총 공제 예상 금액을 산출해줘. "
-                                      "이 때 내가 받을 수 있는 총 공제 예상 금액을 먼저 산출해서 보여주고, "
-                                      "앞으로 받을 수 있는 추가적인 공제내역이 있다면 해당 항목에 대한 간결한 설명과 함께 알려줘."
-                                      "참고할 사이트는 https://www.nts.go.kr/nts/cm/cntnts/cntntsView.do?mi=6596&cntntsId=7875 국세청 공식 사이트야",
-                                      "주어진 문서 본문의 자료를 토대로 질문에 답변하라."
-                                      "추가적인 질문을 요구하는 문장은 제외하라."
-                                      "-- 등으로 불필요한 줄나눔은 없게 하라."
-                                      )
+        # 🔥 캐시 확인
+        cache_key = AICache.generate_cache_key(data_str, "deduction-expectation")
+        cached_response = AICache.get_cached_response(cache_key)
+
+        if cached_response:
+            return cached_response
+
+        # 캐시 미스 - GPT 호출
+        question, role = PromptTemplates.get_deduction_expectation_prompt()
+        answer = await qa_on_document(data_str, question, role)
 
         # AI 응답 전처리: 마크다운, 설명문 제거
         answer = answer.replace("**", "")  # 볼드 제거
         answer = answer.replace("*", "")   # 이탤릭 제거
         answer = re.sub(r'※.*', '', answer)  # 주석 제거
         answer = re.sub(r'---.*', '', answer, flags=re.DOTALL)  # 구분선 이후 제거
+
+        # 🔥 캐시 저장 (24시간)
+        AICache.set_cached_response(cache_key, answer, ttl=86400)
 
         return answer
     except Exception as e:
@@ -689,10 +693,11 @@ async def get_combined_result(session_id: str = Depends(get_current_user)):
         # Redis에서 모든 데이터 가져오기
         encrypted_data = redis_client.hgetall(session_id)
 
-        if not encrypted_data:
+        # 🔥 버그 수정: USER_TOKEN만 있는 경우도 빈 데이터로 간주
+        if not encrypted_data or len(encrypted_data) <= 1:
             raise HTTPException(
                 status_code=404,
-                detail="저장된 재무 데이터가 없습니다"
+                detail="저장된 재무 데이터가 없습니다. 문서를 먼저 업로드해주세요."
             )
 
         # 복호화 및 소득/지출 분리
@@ -951,5 +956,37 @@ async def tax_credit_checklist_markdown(session_id: str = Depends(get_current_us
 
         return answer
 
+    except Exception as e:
+        raise HTTPException(500, f"{type(e).__name__}: {str(e)}")
+
+
+# -----------------------
+# 캐시 관리 엔드포인트
+# -----------------------
+@documents_multi_agents_router.get("/cache/stats")
+@log_util.logging_decorator
+async def get_cache_stats(session_id: str = Depends(get_current_user)):
+    """캐시 통계 조회"""
+    try:
+        stats = AICache.get_cache_stats()
+        return {
+            "success": True,
+            "stats": stats
+        }
+    except Exception as e:
+        raise HTTPException(500, f"{type(e).__name__}: {str(e)}")
+
+
+@documents_multi_agents_router.delete("/cache/clear")
+@log_util.logging_decorator
+async def clear_user_cache(session_id: str = Depends(get_current_user)):
+    """사용자의 모든 캐시 삭제"""
+    try:
+        deleted_count = AICache.invalidate_user_cache(session_id)
+        return {
+            "success": True,
+            "message": f"{deleted_count}개의 캐시 항목이 삭제되었습니다.",
+            "deleted_count": deleted_count
+        }
     except Exception as e:
         raise HTTPException(500, f"{type(e).__name__}: {str(e)}")

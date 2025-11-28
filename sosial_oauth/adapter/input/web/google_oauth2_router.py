@@ -7,6 +7,7 @@ from fastapi.responses import RedirectResponse, JSONResponse
 from config.redis_config import get_redis
 from sosial_oauth.application.usecase.google_oauth2_usecase import GoogleOAuth2UseCase
 from util.log.log import Log
+from util.cache.ai_cache import AICache
 from util.security.crsf import generate_csrf_token, verify_csrf_token, CSRF_COOKIE_NAME
 
 # Singleton 방식으로 변경
@@ -22,7 +23,7 @@ async def redirect_to_google():
     return RedirectResponse(url)
 
 @authentication_router.post("/logout")
-async def logout_to_google(request: Request, session_id: str | None = Cookie(None),, x_csrf_token: str | None = Header(None)):
+async def logout_to_google(request: Request, session_id: str | None = Cookie(None), x_csrf_token: str | None = Header(None)):
 
     logger.info("Logout called")
     logger.info("Request headers: %s", request.headers)
@@ -40,6 +41,12 @@ async def logout_to_google(request: Request, session_id: str | None = Cookie(Non
     logger.debug("Redis has session_id? %s", exists)
 
     if exists:
+        # 🔥 사용자 세션 데이터 삭제 전에 캐시도 함께 삭제
+        logger.info(f"Invalidating cache for session: {session_id}")
+        invalidated_count = AICache.invalidate_user_cache(session_id)
+        logger.info(f"Invalidated {invalidated_count} cache entries")
+
+        # 세션 데이터 삭제
         redis_client.delete(session_id)
         logger.debug("Redis session deleted: %s", redis_client.exists(session_id))
 
@@ -93,7 +100,7 @@ async def process_google_redirect(
         httponly=True,
         secure=False,
         samesite="lax",
-        max_age=3600
+        max_age=86400  # 🔥 24시간으로 변경 (Redis TTL과 동일)
     )
 
     # CSRF 토큰 쿠키 발급
