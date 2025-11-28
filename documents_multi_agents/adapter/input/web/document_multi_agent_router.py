@@ -1,4 +1,4 @@
-from fastapi import APIRouter, Depends, UploadFile, HTTPException, Form, Response,Header
+from fastapi import APIRouter, Depends, UploadFile, HTTPException, Form, Response, Header, Request
 from openai import OpenAI
 from pypdf import PdfReader
 import asyncio
@@ -84,6 +84,7 @@ async def qa_on_document(document: str, question: str, role: str) -> str:
 @documents_multi_agents_router.post("/analyze")
 @log_util.logging_decorator
 async def analyze_document(
+        request: Request,
         response: Response,
         file: UploadFile,
         type_of_doc: str = Form(...),
@@ -91,7 +92,7 @@ async def analyze_document(
         x_csrf_token:  str | None = Header(None)
 ):
     # CSRF 검증
-    verify_csrf_token(x_csrf_token)
+    verify_csrf_token(request, x_csrf_token)
 
     try:
         # 쿠키에 session_id 명시적으로 설정
