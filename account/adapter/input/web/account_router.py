@@ -9,6 +9,7 @@ from account.infrastructure.orm.account_orm import OAuthProvider
 from config.redis_config import get_redis
 from sosial_oauth.infrastructure.service.google_oauth2_service import GoogleOAuth2Service
 from util.log.log import Log
+from util.cache.ai_cache import AICache
 
 account_router = APIRouter()
 usecase = AccountUseCase().get_instance()
@@ -91,7 +92,12 @@ def get_account_by_session_id(session_id: str = Depends(get_current_user)):
 
 @account_router.delete("/session_out")
 def delete_session_by_session_id(session_id: str = Depends(get_current_user)):
-
+    # 🔥 AI 캐시 삭제
+    logger.info(f"Invalidating cache for session: {session_id}")
+    invalidated_count = AICache.invalidate_user_cache(session_id)
+    logger.info(f"Invalidated {invalidated_count} cache entries")
+    
+    # Redis 세션 삭제
     delete_result = redis_client.delete(session_id)
     logger.debug("Redis delete result: %s", delete_result)
     logger.debug("Redis session exists after delete? %s", redis_client.exists(session_id))
